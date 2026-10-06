@@ -5,14 +5,12 @@ import { SystemStatusSummary } from "@/types";
 import { MonitorCard } from "@/components/dashboard/MonitorCard";
 import { IncidentFeed } from "@/components/dashboard/IncidentFeed";
 import { AddMonitorModal } from "@/components/dashboard/AddMonitorModal";
-import { DatabaseGuideModal } from "@/components/dashboard/DatabaseGuideModal";
 import {
   Activity,
   CheckCircle2,
   AlertTriangle,
   Plus,
   Radio,
-  Database,
   RefreshCw,
   ShieldCheck,
   Zap,
@@ -25,7 +23,6 @@ export default function DashboardPage() {
   const [isSseConnected, setIsSseConnected] = useState(false);
   const [filter, setFilter] = useState<"all" | "healthy" | "failing" | "paused">("all");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isDbGuideOpen, setIsDbGuideOpen] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -148,14 +145,6 @@ export default function DashboardPage() {
               <span>{isSseConnected ? "Live SSE Active" : "Connecting..."}</span>
             </div>
 
-            {/* Database Setup Button */}
-            <button
-              onClick={() => setIsDbGuideOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:border-zinc-700 hover:text-zinc-100"
-            >
-              <Database className="h-3.5 w-3.5 text-blue-400" />
-              <span className="hidden md:inline">Database Setup</span>
-            </button>
 
             {/* Trigger Checks */}
             <button
@@ -356,10 +345,6 @@ export default function DashboardPage() {
         onSuccess={fetchStatus}
       />
 
-      <DatabaseGuideModal
-        isOpen={isDbGuideOpen}
-        onClose={() => setIsDbGuideOpen(false)}
-      />
     </div>
   );
 }
