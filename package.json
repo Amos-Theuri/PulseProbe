@@ -12,6 +12,8 @@
     "prisma:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@neon/config": "^1.8.4",
+    "@neon/env": "^1.5.1",
     "@prisma/client": "^6.19.3",
     "lucide-react": "^1.52.0",
     "next": "16.3.8",
