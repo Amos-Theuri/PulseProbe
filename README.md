@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# PulseProbe: Distributed API Uptime & Latency Beacon
 
-## Getting Started
+A production-grade, self-hostable service monitoring and status beacon designed to track real public and private HTTP/HTTPS endpoints, log live latency with monotonic precision, detect downtime, escalate incidents after consecutive failures, and stream real-time updates via Server-Sent Events (SSE).
 
-First, run the development server:
+---
 
+## 1. Tech Stack & Architecture
+
+- **Framework**: Next.js 16 (App Router, React 19, TypeScript, Tailwind CSS)
+- **API Engine**: Next.js Route Handlers with Web Request & Response APIs
+- **Database & ORM**: PostgreSQL with Prisma ORM
+- **Network Probe**: Native fetch with monotonic clock (`performance.now()`), AbortController timeouts, and strict SSRF protection
+- **Real-time Engine**: Server-Sent Events (SSE) via Web Streams API (`/api/events`)
+- **Testing**: Vitest test suite for SSRF enforcement, probe error classification, and sliding-window uptime calculation
+
+---
+
+## 2. Setting Up Resources & Database
+
+PulseProbe uses PostgreSQL for persisting targets (`Monitor`), ping telemetry (`PingLog`), and outage records (`Incident`). Choose one of the setup methods below:
+
+### Option A: Free Cloud PostgreSQL (Recommended — Neon or Supabase)
+1. Sign up for free at [neon.tech](https://neon.tech) or [supabase.com](https://supabase.com).
+2. Create a database project and copy your connection string (e.g. `postgresql://user:password@ep-sample.aws.neon.tech/pulseprobe?sslmode=require`).
+3. Paste it into `.env`:
+   ```bash
+   DATABASE_URL="postgresql://user:password@ep-sample.aws.neon.tech/pulseprobe?sslmode=require"
+   ```
+
+### Option B: Local Docker Container
+If Docker is installed:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker run --name pulseprobe-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pulseprobe -p 5432:5432 -d postgres:16
+```
+Then configure in `.env`:
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/pulseprobe?schema=public"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Option C: Native Linux PostgreSQL
+```bash
+sudo apt update && sudo apt install -y postgresql postgresql-contrib
+sudo -u postgres psql -c "CREATE DATABASE pulseprobe;"
+sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 3. Database Migration
 
-## Learn More
+Once your `DATABASE_URL` is set:
+```bash
+# Generate the Prisma Client
+npm run prisma:generate
 
-To learn more about Next.js, take a look at the following resources:
+# Run schema migrations
+npm run prisma:migrate
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+*Note: PulseProbe also includes an automatic in-memory fallback layer, allowing you to run, explore the UI, and probe endpoints even before completing database configuration.*
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+## 4. Running the Application
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Automated Test Suite
+Run the test suite verifying SSRF protection, uptime aggregation, and probe error classification:
+```bash
+npm test
+```
+
+### Production Build
+```bash
+npm run build
+npm start
+```
+
+---
+
+## 5. Security & SSRF Protection
+
+PulseProbe enforces strict SSRF protections in `src/lib/probe/ssrf.ts`:
+- Rejects non-HTTP/HTTPS protocols (e.g. `file://`, `ftp://`, `gopher://`).
+- Blocks private IPv4 subnets (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+- Blocks cloud metadata and link-local ranges (`169.254.169.254`, `fe80::/10`).
+- Blocks IPv6 loopback (`::1`) and unique local addresses (`fc00::/7`).
+- Performs pre-flight DNS lookups to inspect resolved IP addresses.

@@ -1,0 +1,55 @@
+// PulseProbe Prisma Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Monitor {
+  id               String      @id @default(uuid())
+  name             String
+  url              String
+  intervalSeconds  Int         @default(60)
+  expectedStatus   Int         @default(200)
+  active           Boolean     @default(true)
+  lastCheckAt      DateTime?
+  consecutiveFails Int         @default(0)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  pings            PingLog[]
+  incidents        Incident[]
+
+  @@index([active])
+}
+
+model PingLog {
+  id             String   @id @default(uuid())
+  monitorId      String
+  monitor        Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  statusCode     Int?
+  responseTimeMs Float
+  timestamp      DateTime @default(now())
+  isHealthy      Boolean
+  errorMessage   String?
+
+  @@index([monitorId, timestamp])
+}
+
+model Incident {
+  id         String    @id @default(uuid())
+  monitorId  String
+  monitor    Monitor   @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  status     String    @default("OPEN") // OPEN, ACK, RESOLVED
+  startedAt  DateTime  @default(now())
+  resolvedAt DateTime?
+  reason     String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([monitorId, status])
+  @@index([status])
+}
