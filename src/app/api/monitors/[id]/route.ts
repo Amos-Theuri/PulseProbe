@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/repository";
 import { MonitorUpdateSchema } from "@/types";
 import { validateSafeUrl } from "@/lib/probe/ssrf";
+import { isValidUuid, sanitizeErrorMessage } from "@/lib/security/middleware";
 
 export const dynamic = "force-dynamic";
 
@@ -15,14 +16,22 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+
+    // L-1 FIX: Validate UUID format
+    if (!isValidUuid(id)) {
+      return NextResponse.json({ error: "Invalid monitor ID format" }, { status: 400 });
+    }
+
     const monitor = await getMonitorById(id);
     if (!monitor) {
       return NextResponse.json({ error: "Monitor not found" }, { status: 404 });
     }
     return NextResponse.json(monitor);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: sanitizeErrorMessage(error) },
+      { status: 500 }
+    );
   }
 }
 
@@ -30,8 +39,23 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Auth check
+  const apiKey = process.env.PULSEPROBE_API_KEY;
+  if (apiKey) {
+    const authHeader = req.headers.get("authorization");
+    const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
+    if (token !== apiKey) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+  }
+
   try {
     const { id } = await params;
+
+    if (!isValidUuid(id)) {
+      return NextResponse.json({ error: "Invalid monitor ID format" }, { status: 400 });
+    }
+
     const json = await req.json();
     const parsed = MonitorUpdateSchema.safeParse(json);
 
@@ -65,24 +89,43 @@ export async function PATCH(
 
     return NextResponse.json(updated);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: sanitizeErrorMessage(error) },
+      { status: 500 }
+    );
   }
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Auth check
+  const apiKey = process.env.PULSEPROBE_API_KEY;
+  if (apiKey) {
+    const authHeader = req.headers.get("authorization");
+    const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
+    if (token !== apiKey) {
+      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    }
+  }
+
   try {
     const { id } = await params;
+
+    if (!isValidUuid(id)) {
+      return NextResponse.json({ error: "Invalid monitor ID format" }, { status: 400 });
+    }
+
     const deleted = await deleteMonitor(id);
     if (!deleted) {
       return NextResponse.json({ error: "Monitor not found" }, { status: 404 });
     }
     return NextResponse.json({ success: true, message: "Monitor deleted" });
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Internal Server Error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: sanitizeErrorMessage(error) },
+      { status: 500 }
+    );
   }
 }

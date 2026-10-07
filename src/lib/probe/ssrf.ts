@@ -103,8 +103,20 @@ export function isPrivateIpv6(ip: string): boolean {
 }
 
 /**
+ * Checks if a single IP address is private/reserved.
+ */
+export function isPrivateIp(ip: string): boolean {
+  if (net.isIPv4(ip)) return isPrivateIpv4(ip);
+  if (net.isIPv6(ip)) return isPrivateIpv6(ip);
+  return true; // Unknown format is unsafe
+}
+
+/**
  * Validates a target URL against SSRF attacks by inspecting protocol, hostname,
  * and performing DNS resolution to verify all target IPs.
+ *
+ * Returns the resolved IPs on success — the caller MUST use these pinned IPs
+ * when making the actual request to prevent DNS rebinding attacks (TOCTOU).
  */
 export async function validateSafeUrl(
   urlStr: string,
@@ -150,10 +162,7 @@ export async function validateSafeUrl(
 
   // If hostname is directly an IP literal
   if (net.isIP(hostname)) {
-    const isPrivate =
-      net.isIPv4(hostname) ? isPrivateIpv4(hostname) : isPrivateIpv6(hostname);
-
-    if (isPrivate && !options.allowPrivate) {
+    if (isPrivateIp(hostname) && !options.allowPrivate) {
       return {
         safe: false,
         reason: `Direct IP target "${hostname}" belongs to a private, loopback, or reserved subnet`,
@@ -174,10 +183,7 @@ export async function validateSafeUrl(
 
     if (!options.allowPrivate) {
       for (const ip of resolvedIps) {
-        const isPrivate =
-          net.isIPv4(ip) ? isPrivateIpv4(ip) : isPrivateIpv6(ip);
-
-        if (isPrivate) {
+        if (isPrivateIp(ip)) {
           return {
             safe: false,
             reason: `Target host "${hostname}" resolves to private/reserved IP: ${ip}`,

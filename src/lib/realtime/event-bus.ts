@@ -7,10 +7,36 @@ export interface StreamEvent {
   timestamp: string;
 }
 
+const MAX_SSE_CLIENTS = parseInt(process.env.MAX_SSE_CLIENTS || "100", 10);
+
 class EventHub extends EventEmitter {
+  private activeClients = 0;
+
   constructor() {
     super();
-    this.setMaxListeners(100);
+    this.setMaxListeners(MAX_SSE_CLIENTS + 10);
+  }
+
+  canAcceptClient(): boolean {
+    return this.activeClients < MAX_SSE_CLIENTS;
+  }
+
+  registerClient(): boolean {
+    if (this.activeClients >= MAX_SSE_CLIENTS) {
+      return false;
+    }
+    this.activeClients++;
+    return true;
+  }
+
+  unregisterClient(): void {
+    if (this.activeClients > 0) {
+      this.activeClients--;
+    }
+  }
+
+  getClientCount(): number {
+    return this.activeClients;
   }
 
   broadcast(event: StreamEvent) {
