@@ -24,6 +24,7 @@
 .DS_Store
 *.pem
 api_status_latency_beacon_readme.md
+SAMPLE_APIS.md
 
 # debug
 npm-debug.log*
