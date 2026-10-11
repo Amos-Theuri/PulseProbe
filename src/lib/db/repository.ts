@@ -100,15 +100,28 @@ if (!globalThis.memoryDb) {
 
 const mem = globalThis.memoryDb;
 
+let lastDbCheck = 0;
+let lastDbConnected = false;
+const DB_CHECK_CACHE_MS = 15_000;
+
 /**
  * Checks if the configured Prisma PostgreSQL database is reachable.
+ * Caches health state for 15s to eliminate redundant round-trips.
  */
 export async function isDatabaseConnected(): Promise<boolean> {
+  const now = Date.now();
+  if (now - lastDbCheck < DB_CHECK_CACHE_MS) {
+    return lastDbConnected;
+  }
   try {
     await prisma.$queryRaw`SELECT 1`;
+    lastDbConnected = true;
+    lastDbCheck = now;
     mem.isPrismaWorking = true;
     return true;
   } catch {
+    lastDbConnected = false;
+    lastDbCheck = now;
     mem.isPrismaWorking = false;
     return false;
   }
@@ -295,6 +308,19 @@ export async function recordPingResult(result: ProbeResult): Promise<void> {
             consecutiveFails,
           },
         });
+
+        // 4. Opportunistic retention pruning (delete logs older than 30 days)
+        if (Math.random() < 0.05) {
+          tx.pingLog
+            .deleteMany({
+              where: {
+                timestamp: {
+                  lt: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+                },
+              },
+            })
+            .catch(() => {});
+        }
       });
       return;
     } catch {
@@ -364,119 +390,135 @@ export async function recordPingResult(result: ProbeResult): Promise<void> {
 export async function getSystemStatus(): Promise<SystemStatusSummary> {
   const hasDb = await isDatabaseConnected();
   const monitors = await getMonitors();
-  const monitorStatsList: MonitorWithStats[] = [];
 
+  // 1. Batch-fetch all OPEN incidents in a single query across all monitors
+  const openIncidentsMap = new Map<string, IncidentDisplay>();
+  if (hasDb) {
+    try {
+      const dbOpenIncidents = await prisma.incident.findMany({
+        where: { status: "OPEN" },
+        orderBy: { startedAt: "desc" },
+      });
+      for (const inc of dbOpenIncidents) {
+        if (!openIncidentsMap.has(inc.monitorId)) {
+          openIncidentsMap.set(inc.monitorId, {
+            id: inc.id,
+            monitorId: inc.monitorId,
+            status: "OPEN",
+            startedAt: inc.startedAt.toISOString(),
+            resolvedAt: null,
+            reason: inc.reason,
+          });
+        }
+      }
+    } catch {
+      // Fallback
+    }
+  }
+
+  // 2. Query ping history and compute stats in parallel using Promise.all
   let totalLatency = 0;
   let latencyCount = 0;
   let healthyCount = 0;
   let failingCount = 0;
 
-  for (const m of monitors) {
-    let pings: Array<{
-      timestamp: Date;
-      isHealthy: boolean;
-      responseTimeMs: number;
-      statusCode: number | null;
-    }> = [];
-    let openIncident: IncidentDisplay | null = null;
+  const monitorStatsList: MonitorWithStats[] = await Promise.all(
+    monitors.map(async (m) => {
+      let pings: Array<{
+        timestamp: Date;
+        isHealthy: boolean;
+        responseTimeMs: number;
+        statusCode: number | null;
+      }> = [];
+      let openIncident: IncidentDisplay | null = openIncidentsMap.get(m.id) ?? null;
 
-    if (hasDb) {
-      try {
-        const dbPings = await prisma.pingLog.findMany({
-          where: { monitorId: m.id },
-          orderBy: { timestamp: "desc" },
-          take: 60,
-        });
-        pings = dbPings.map((p) => ({
-          timestamp: p.timestamp,
-          isHealthy: p.isHealthy,
+      if (hasDb) {
+        try {
+          const dbPings = await prisma.pingLog.findMany({
+            where: { monitorId: m.id },
+            orderBy: { timestamp: "desc" },
+            take: 60,
+          });
+          pings = dbPings.map((p) => ({
+            timestamp: p.timestamp,
+            isHealthy: p.isHealthy,
+            responseTimeMs: p.responseTimeMs,
+            statusCode: p.statusCode,
+          }));
+        } catch {
+          // Fallback
+        }
+      }
+
+      if (pings.length === 0) {
+        pings = mem.pingLogs
+          .filter((p) => p.monitorId === m.id)
+          .slice(-60)
+          .reverse();
+
+        if (!openIncident) {
+          for (const inc of mem.incidents.values()) {
+            if (inc.monitorId === m.id && inc.status === "OPEN") {
+              openIncident = {
+                id: inc.id,
+                monitorId: inc.monitorId,
+                status: inc.status,
+                startedAt: inc.startedAt.toISOString(),
+                resolvedAt: inc.resolvedAt ? inc.resolvedAt.toISOString() : null,
+                reason: inc.reason,
+              };
+              break;
+            }
+          }
+        }
+      }
+
+      const latestPing = pings[0];
+      const isHealthy = latestPing ? latestPing.isHealthy : true;
+      const currentLatencyMs = latestPing ? latestPing.responseTimeMs : null;
+      const uptime = aggregateUptimeMetrics(pings);
+
+      const sparkline = pings
+        .slice(0, 30)
+        .reverse()
+        .map((p) => ({
+          timestamp: p.timestamp.toISOString(),
           responseTimeMs: p.responseTimeMs,
+          isHealthy: p.isHealthy,
           statusCode: p.statusCode,
         }));
 
-        const dbInc = await prisma.incident.findFirst({
-          where: { monitorId: m.id, status: "OPEN" },
-          orderBy: { startedAt: "desc" },
-        });
-        if (dbInc) {
-          openIncident = {
-            id: dbInc.id,
-            monitorId: dbInc.monitorId,
-            status: dbInc.status as "OPEN" | "ACK" | "RESOLVED",
-            startedAt: dbInc.startedAt.toISOString(),
-            resolvedAt: dbInc.resolvedAt ? dbInc.resolvedAt.toISOString() : null,
-            reason: dbInc.reason,
-          };
-        }
-      } catch {
-        // Fallback
-      }
-    }
+      return {
+        id: m.id,
+        name: m.name,
+        url: m.url,
+        intervalSeconds: m.intervalSeconds,
+        expectedStatus: m.expectedStatus,
+        active: m.active,
+        lastCheckAt: m.lastCheckAt ? m.lastCheckAt.toISOString() : null,
+        consecutiveFails: m.consecutiveFails,
+        createdAt: m.createdAt.toISOString(),
+        updatedAt: m.updatedAt.toISOString(),
+        isHealthy,
+        currentLatencyMs,
+        uptime,
+        sparkline,
+        activeIncident: openIncident,
+      };
+    })
+  );
 
-    if (pings.length === 0) {
-      pings = mem.pingLogs
-        .filter((p) => p.monitorId === m.id)
-        .slice(-60)
-        .reverse();
-
-      for (const inc of mem.incidents.values()) {
-        if (inc.monitorId === m.id && inc.status === "OPEN") {
-          openIncident = {
-            id: inc.id,
-            monitorId: inc.monitorId,
-            status: inc.status,
-            startedAt: inc.startedAt.toISOString(),
-            resolvedAt: inc.resolvedAt ? inc.resolvedAt.toISOString() : null,
-            reason: inc.reason,
-          };
-          break;
-        }
-      }
-    }
-
-    const latestPing = pings[0];
-    const isHealthy = latestPing ? latestPing.isHealthy : true;
-    const currentLatencyMs = latestPing ? latestPing.responseTimeMs : null;
-
-    if (latestPing) {
-      if (latestPing.isHealthy) healthyCount++;
+  // Compute aggregation metrics
+  for (const m of monitorStatsList) {
+    if (m.currentLatencyMs !== null) {
+      if (m.isHealthy) healthyCount++;
       else failingCount++;
 
-      totalLatency += latestPing.responseTimeMs;
+      totalLatency += m.currentLatencyMs;
       latencyCount++;
     } else {
       healthyCount++;
     }
-
-    const uptime = aggregateUptimeMetrics(pings);
-
-    const sparkline = pings
-      .slice(0, 30)
-      .reverse()
-      .map((p) => ({
-        timestamp: p.timestamp.toISOString(),
-        responseTimeMs: p.responseTimeMs,
-        isHealthy: p.isHealthy,
-        statusCode: p.statusCode,
-      }));
-
-    monitorStatsList.push({
-      id: m.id,
-      name: m.name,
-      url: m.url,
-      intervalSeconds: m.intervalSeconds,
-      expectedStatus: m.expectedStatus,
-      active: m.active,
-      lastCheckAt: m.lastCheckAt ? m.lastCheckAt.toISOString() : null,
-      consecutiveFails: m.consecutiveFails,
-      createdAt: m.createdAt.toISOString(),
-      updatedAt: m.updatedAt.toISOString(),
-      isHealthy,
-      currentLatencyMs,
-      uptime,
-      sparkline,
-      activeIncident: openIncident,
-    });
   }
 
   // Get recent incidents
@@ -543,5 +585,6 @@ export async function getSystemStatus(): Promise<SystemStatusSummary> {
     averageLatencyMs,
     monitors: monitorStatsList,
     recentIncidents,
+    requiresAuth: Boolean(process.env.PULSEPROBE_API_KEY),
   };
 }

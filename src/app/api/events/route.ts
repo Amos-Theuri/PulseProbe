@@ -3,6 +3,19 @@ import { eventHub, StreamEvent } from "@/lib/realtime/event-bus";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  if (!eventHub.registerClient()) {
+    return new Response(
+      JSON.stringify({ error: "Maximum realtime client capacity reached. Try again shortly." }),
+      {
+        status: 503,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": "30",
+        },
+      }
+    );
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -38,12 +51,16 @@ export async function GET(req: Request) {
       req.signal.addEventListener("abort", () => {
         clearInterval(heartbeatTimer);
         eventHub.off("stream-event", onStreamEvent);
+        eventHub.unregisterClient();
         try {
           controller.close();
         } catch {
           // Ignore
         }
       });
+    },
+    cancel() {
+      eventHub.unregisterClient();
     },
   });
 

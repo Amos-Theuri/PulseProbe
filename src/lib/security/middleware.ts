@@ -1,46 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * Simple API key authentication middleware.
- * Checks the Authorization header for a Bearer token matching PULSEPROBE_API_KEY.
- * If PULSEPROBE_API_KEY is not set, auth is bypassed (dev mode).
+ * Validates request authorization.
+ * Supports:
+ * 1. Authorization: Bearer <key>
+ * 2. x-api-key: <key>
+ * 3. Cookie: pulseprobe-api-key=<key>
+ * If PULSEPROBE_API_KEY is not set on the server, auth is bypassed (dev mode).
+ */
+export function isAuthorized(req: NextRequest): boolean {
+  const apiKey = process.env.PULSEPROBE_API_KEY;
+  if (!apiKey) {
+    return true; // dev mode / auth not configured
+  }
+
+  const authHeader = req.headers.get("authorization");
+  const bearerToken = authHeader?.replace(/^Bearer\s+/i, "").trim();
+  const customHeader = req.headers.get("x-api-key")?.trim();
+  const cookieToken = req.cookies.get("pulseprobe-api-key")?.value?.trim();
+
+  return (
+    bearerToken === apiKey ||
+    customHeader === apiKey ||
+    cookieToken === apiKey
+  );
+}
+
+/**
+ * Simple API key authentication middleware wrapper.
  */
 export function withAuth(
   handler: (req: NextRequest, ctx: unknown) => Promise<NextResponse>
 ) {
   return async (req: NextRequest, ctx: unknown): Promise<NextResponse> => {
-    const apiKey = process.env.PULSEPROBE_API_KEY;
-
-    // If no API key is configured, allow all requests (dev mode)
-    if (!apiKey) {
-      return handler(req, ctx);
-    }
-
-    const authHeader = req.headers.get("authorization");
-    if (!authHeader) {
+    if (!isAuthorized(req)) {
       return NextResponse.json(
-        { error: "Authentication required. Provide Authorization: Bearer <api-key>" },
+        { error: "Authentication required. Provide valid API key via Authorization header, x-api-key, or cookie." },
         { status: 401 }
       );
     }
-
-    const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (token !== apiKey) {
-      return NextResponse.json(
-        { error: "Invalid API key" },
-        { status: 403 }
-      );
-    }
-
     return handler(req, ctx);
   };
 }
-
-/**
- * Client-side auth check: reads PULSEPROBE_API_KEY from a cookie
- * named "pulseprobe-api-key" and passes it in fetch headers.
- * For the browser dashboard, the key is set via the UI settings.
- */
 
 /**
  * Validates a UUID v4 format string.
@@ -118,11 +119,14 @@ export function checkRateLimit(
 
 /**
  * Extracts client IP from the request for rate limiting.
+ * Prioritizes edge platform headers (Cloudflare, Vercel) to mitigate header spoofing.
  */
 export function getClientIp(req: NextRequest): string {
   return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("cf-connecting-ip") ||
+    req.headers.get("x-vercel-ip") ||
     req.headers.get("x-real-ip") ||
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     "unknown"
   );
 }

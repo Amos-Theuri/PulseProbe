@@ -19,17 +19,35 @@ import {
 interface MonitorCardProps {
   monitor: MonitorWithStats;
   onRefresh: () => void;
+  apiKey?: string;
+  onRequestAuth?: () => void;
 }
 
-export function MonitorCard({ monitor, onRefresh }: MonitorCardProps) {
+export function MonitorCard({ monitor, onRefresh, apiKey, onRequestAuth }: MonitorCardProps) {
   const [isPinging, setIsPinging] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const getHeaders = (baseHeaders: Record<string, string> = {}) => {
+    const headers = { ...baseHeaders };
+    if (apiKey) {
+      headers["x-api-key"] = apiKey;
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+    return headers;
+  };
+
   const handlePingNow = async () => {
     setIsPinging(true);
     try {
-      await fetch(`/api/monitors/${monitor.id}/check`, { method: "POST" });
+      const res = await fetch(`/api/monitors/${monitor.id}/check`, {
+        method: "POST",
+        headers: getHeaders(),
+      });
+      if (res.status === 401) {
+        onRequestAuth?.();
+        return;
+      }
       onRefresh();
     } catch (err) {
       console.error("Manual ping error:", err);
@@ -41,11 +59,15 @@ export function MonitorCard({ monitor, onRefresh }: MonitorCardProps) {
   const handleToggleActive = async () => {
     setIsToggling(true);
     try {
-      await fetch(`/api/monitors/${monitor.id}`, {
+      const res = await fetch(`/api/monitors/${monitor.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: getHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ active: !monitor.active }),
       });
+      if (res.status === 401) {
+        onRequestAuth?.();
+        return;
+      }
       onRefresh();
     } catch (err) {
       console.error("Toggle error:", err);
@@ -58,7 +80,14 @@ export function MonitorCard({ monitor, onRefresh }: MonitorCardProps) {
     if (!confirm(`Are you sure you want to delete monitor "${monitor.name}"?`)) return;
     setIsDeleting(true);
     try {
-      await fetch(`/api/monitors/${monitor.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/monitors/${monitor.id}`, {
+        method: "DELETE",
+        headers: getHeaders(),
+      });
+      if (res.status === 401) {
+        onRequestAuth?.();
+        return;
+      }
       onRefresh();
     } catch (err) {
       console.error("Delete error:", err);

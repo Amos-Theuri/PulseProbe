@@ -3,7 +3,7 @@ import { getMonitors, createMonitor } from "@/lib/db/repository";
 import { MonitorCreateSchema } from "@/types";
 import { validateSafeUrl } from "@/lib/probe/ssrf";
 import { runCheckForMonitor } from "@/lib/scheduler/dispatcher";
-import { checkRateLimit, getClientIp, sanitizeErrorMessage } from "@/lib/security/middleware";
+import { checkRateLimit, getClientIp, isAuthorized, sanitizeErrorMessage } from "@/lib/security/middleware";
 
 export const dynamic = "force-dynamic";
 
@@ -24,16 +24,11 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   // Auth check
-  const apiKey = process.env.PULSEPROBE_API_KEY;
-  if (apiKey) {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
-    if (token !== apiKey) {
-      return NextResponse.json(
-        { error: "Authentication required" },
-        { status: 401 }
-      );
-    }
+  if (!isAuthorized(req)) {
+    return NextResponse.json(
+      { error: "Authentication required. Admin API key is required to create monitors." },
+      { status: 401 }
+    );
   }
 
   // Rate limit: 10 per minute

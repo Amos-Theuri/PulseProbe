@@ -7,12 +7,16 @@ interface AddMonitorModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  apiKey?: string;
+  onRequestAuth?: () => void;
 }
 
 export function AddMonitorModal({
   isOpen,
   onClose,
   onSuccess,
+  apiKey,
+  onRequestAuth,
 }: AddMonitorModalProps) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
@@ -29,9 +33,15 @@ export function AddMonitorModal({
     setErrorMessage(null);
 
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (apiKey) {
+        headers["x-api-key"] = apiKey;
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+
       const res = await fetch("/api/monitors", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           name,
           url,
@@ -43,6 +53,10 @@ export function AddMonitorModal({
 
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 401) {
+          onRequestAuth?.();
+          throw new Error("Admin authentication required. Please enter your API key to create monitors.");
+        }
         throw new Error(data.message || data.error || "Failed to create monitor");
       }
 

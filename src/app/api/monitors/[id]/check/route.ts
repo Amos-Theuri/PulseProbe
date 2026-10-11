@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMonitorById } from "@/lib/db/repository";
 import { runCheckForMonitor } from "@/lib/scheduler/dispatcher";
-import { isValidUuid, checkRateLimit, getClientIp, sanitizeErrorMessage } from "@/lib/security/middleware";
+import { isValidUuid, isAuthorized, checkRateLimit, getClientIp, sanitizeErrorMessage } from "@/lib/security/middleware";
 
 export const dynamic = "force-dynamic";
 
@@ -10,13 +10,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   // Auth check
-  const apiKey = process.env.PULSEPROBE_API_KEY;
-  if (apiKey) {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
-    if (token !== apiKey) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {

@@ -107,4 +107,5 @@ export interface SystemStatusSummary {
   averageLatencyMs: number;
   monitors: MonitorWithStats[];
   recentIncidents: IncidentDisplay[];
+  requiresAuth?: boolean;
 }

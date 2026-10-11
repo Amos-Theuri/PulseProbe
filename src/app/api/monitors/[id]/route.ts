@@ -6,7 +6,7 @@ import {
 } from "@/lib/db/repository";
 import { MonitorUpdateSchema } from "@/types";
 import { validateSafeUrl } from "@/lib/probe/ssrf";
-import { isValidUuid, sanitizeErrorMessage } from "@/lib/security/middleware";
+import { isValidUuid, isAuthorized, sanitizeErrorMessage } from "@/lib/security/middleware";
 
 export const dynamic = "force-dynamic";
 
@@ -40,13 +40,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   // Auth check
-  const apiKey = process.env.PULSEPROBE_API_KEY;
-  if (apiKey) {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
-    if (token !== apiKey) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {
@@ -101,13 +96,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   // Auth check
-  const apiKey = process.env.PULSEPROBE_API_KEY;
-  if (apiKey) {
-    const authHeader = req.headers.get("authorization");
-    const token = authHeader?.replace(/^Bearer\s+/i, "").trim();
-    if (token !== apiKey) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-    }
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {

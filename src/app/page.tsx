@@ -12,6 +12,10 @@ import {
   Radio,
   RefreshCw,
   Zap,
+  Key,
+  Lock,
+  Unlock,
+  X,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -21,6 +25,44 @@ export default function DashboardPage() {
   const [isSseConnected, setIsSseConnected] = useState(false);
   const [filter, setFilter] = useState<"all" | "healthy" | "failing" | "paused">("all");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [apiKey, setApiKey] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("pulseprobe-api-key") || "";
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  });
+  const [inputKey, setInputKey] = useState(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("pulseprobe-api-key") || "";
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  });
+
+  const handleSaveApiKey = (keyToSave: string) => {
+    const trimmed = keyToSave.trim();
+    setApiKey(trimmed);
+    try {
+      if (trimmed) {
+        localStorage.setItem("pulseprobe-api-key", trimmed);
+        document.cookie = `pulseprobe-api-key=${encodeURIComponent(trimmed)}; path=/; max-age=2592000; SameSite=Lax`;
+      } else {
+        localStorage.removeItem("pulseprobe-api-key");
+        document.cookie = "pulseprobe-api-key=; path=/; max-age=0; SameSite=Lax";
+      }
+    } catch {
+      // Ignore
+    }
+    setIsAuthModalOpen(false);
+  };
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -40,7 +82,15 @@ export default function DashboardPage() {
   const triggerProbeBatch = async () => {
     setIsRefreshing(true);
     try {
-      await fetch("/api/worker/tick", { method: "POST" });
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers["x-api-key"] = apiKey;
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+      const res = await fetch("/api/worker/tick", { method: "POST", headers });
+      if (res.status === 401) {
+        setIsAuthModalOpen(true);
+      }
       await fetchStatus();
     } catch (err) {
       console.error("Batch probe failed:", err);
@@ -74,7 +124,7 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Server-Sent Events (SSE) listener
+  // Server-Sent Events (SSE) listener & live polling fallback
   useEffect(() => {
     let eventSource: EventSource | null = null;
     try {
@@ -103,16 +153,16 @@ export default function DashboardPage() {
       // EventSource instantiation error
     }
 
-    // Auto-tick worker every 30 seconds to simulate continuous probing
-    const tickInterval = setInterval(() => {
-      fetch("/api/worker/tick", { method: "POST" }).then(() => fetchStatus());
-    }, 30000);
+    // Auto-poll status periodically (every 20s) to keep views in sync without overwhelming probe ticks
+    const pollInterval = setInterval(() => {
+      fetchStatus();
+    }, 20000);
 
     return () => {
       if (eventSource) {
         eventSource.close();
       }
-      clearInterval(tickInterval);
+      clearInterval(pollInterval);
     };
   }, [fetchStatus]);
 
@@ -164,6 +214,25 @@ export default function DashboardPage() {
             </div>
 
 
+            {/* Admin Key Button */}
+            {data?.requiresAuth && (
+              <button
+                onClick={() => {
+                  setInputKey(apiKey);
+                  setIsAuthModalOpen(true);
+                }}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                  apiKey
+                    ? "border-emerald-500/40 bg-emerald-950/30 text-emerald-400 hover:border-emerald-400"
+                    : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                }`}
+                title={apiKey ? "Admin Mode Active (click to manage API key)" : "Admin Unlock required to manage monitors"}
+              >
+                {apiKey ? <Unlock className="h-3.5 w-3.5 text-emerald-400" /> : <Lock className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{apiKey ? "Admin Mode" : "Admin Unlock"}</span>
+              </button>
+            )}
+
             {/* Trigger Checks */}
             <button
               onClick={triggerProbeBatch}
@@ -176,7 +245,13 @@ export default function DashboardPage() {
 
             {/* Add Target */}
             <button
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={() => {
+                if (data?.requiresAuth && !apiKey) {
+                  setIsAuthModalOpen(true);
+                } else {
+                  setIsAddModalOpen(true);
+                }
+              }}
               className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-zinc-950 shadow-md shadow-emerald-500/20 hover:bg-emerald-400"
             >
               <Plus className="h-4 w-4" />
@@ -335,7 +410,16 @@ export default function DashboardPage() {
           ) : (
             <div className="grid grid-cols-1 gap-4">
               {filteredMonitors.map((mon) => (
-                <MonitorCard key={mon.id} monitor={mon} onRefresh={fetchStatus} />
+                <MonitorCard
+                  key={mon.id}
+                  monitor={mon}
+                  onRefresh={fetchStatus}
+                  apiKey={apiKey}
+                  onRequestAuth={() => {
+                    setInputKey(apiKey);
+                    setIsAuthModalOpen(true);
+                  }}
+                />
               ))}
             </div>
           )}
@@ -356,13 +440,103 @@ export default function DashboardPage() {
         </section>
       </main>
 
+      {/* Footer */}
+      <footer className="border-t border-zinc-800/80 bg-zinc-950 py-6 text-center text-xs text-zinc-500">
+        <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+          <p>© {new Date().getFullYear()} PulseProbe Beacon. Open source & MIT Licensed.</p>
+          <div className="flex items-center gap-4 text-zinc-400">
+            <span>SSRF Protected</span>
+            <span>•</span>
+            <span>Monotonic TTFB Latency</span>
+            <span>•</span>
+            <span>Zero Tracking Cookies</span>
+          </div>
+        </div>
+      </footer>
+
       {/* Modals */}
       <AddMonitorModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onSuccess={fetchStatus}
+        apiKey={apiKey}
+        onRequestAuth={() => {
+          setInputKey(apiKey);
+          setIsAuthModalOpen(true);
+        }}
       />
 
+      {/* Admin API Key Modal */}
+      {isAuthModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <Key className="h-4 w-4" />
+                </div>
+                <h2 className="text-base font-semibold text-zinc-100">Admin Authentication</h2>
+              </div>
+              <button
+                onClick={() => setIsAuthModalOpen(false)}
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              <p className="text-xs text-zinc-400">
+                This PulseProbe deployment is protected by an Admin API key. Enter your secret key to create, pause, or delete monitors.
+              </p>
+
+              <div>
+                <label className="block text-xs font-medium text-zinc-300">
+                  PulseProbe API Key (Bearer Token)
+                </label>
+                <input
+                  type="password"
+                  value={inputKey}
+                  onChange={(e) => setInputKey(e.target.value)}
+                  placeholder="Paste your PULSEPROBE_API_KEY..."
+                  className="mt-1.5 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-200 focus:border-emerald-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                {apiKey ? (
+                  <button
+                    type="button"
+                    onClick={() => handleSaveApiKey("")}
+                    className="rounded-lg border border-red-500/30 bg-red-950/20 px-3 py-1.5 text-xs text-red-400 hover:bg-red-900/30"
+                  >
+                    Clear Saved Key
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAuthModalOpen(false)}
+                    className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveApiKey(inputKey)}
+                    className="rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-zinc-950 shadow-md shadow-emerald-500/20 hover:bg-emerald-400"
+                  >
+                    Save & Unlock
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
