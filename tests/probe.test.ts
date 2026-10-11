@@ -40,5 +40,27 @@ describe("Probe Engine", () => {
       expect(result.statusCode).toBeNull();
       expect(result.errorMessage).toContain("Blocked by SSRF protection");
     });
+
+    it("should block SSRF attempts redirected to private or metadata addresses", async () => {
+      const originalFetch = globalThis.fetch;
+      // Mock fetch to simulate an initial external endpoint redirecting to AWS metadata
+      globalThis.fetch = async () => {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: "http://169.254.169.254/latest/meta-data/",
+          },
+        });
+      };
+
+      try {
+        const result = await executeProbe("test-id", "https://1.1.1.1/some-endpoint");
+        expect(result.isHealthy).toBe(false);
+        expect(result.errorCategory).toBe("SSRF_FORBIDDEN");
+        expect(result.errorMessage).toContain("SSRF blocked redirect");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });

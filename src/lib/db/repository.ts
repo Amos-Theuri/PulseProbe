@@ -46,7 +46,6 @@ interface InternalIncident {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var memoryDb:
     | {
         monitors: Map<string, InternalMonitor>;

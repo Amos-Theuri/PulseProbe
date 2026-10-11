@@ -2,7 +2,7 @@
 
 import React from "react";
 import { IncidentDisplay } from "@/types";
-import { AlertCircle, CheckCircle2, ShieldAlert } from "lucide-react";
+import { CheckCircle2, ShieldAlert } from "lucide-react";
 
 interface IncidentFeedProps {
   incidents: IncidentDisplay[];

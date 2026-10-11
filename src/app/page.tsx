@@ -6,13 +6,11 @@ import { MonitorCard } from "@/components/dashboard/MonitorCard";
 import { IncidentFeed } from "@/components/dashboard/IncidentFeed";
 import { AddMonitorModal } from "@/components/dashboard/AddMonitorModal";
 import {
-  Activity,
   CheckCircle2,
   AlertTriangle,
   Plus,
   Radio,
   RefreshCw,
-  ShieldCheck,
   Zap,
 } from "lucide-react";
 
@@ -53,8 +51,28 @@ export default function DashboardPage() {
 
   // Initial load
   useEffect(() => {
-    fetchStatus();
-  }, [fetchStatus]);
+    let active = true;
+    fetch("/api/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (active && json) {
+          setData(json);
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to fetch status:", err);
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoading(false);
+          setIsRefreshing(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Server-Sent Events (SSE) listener
   useEffect(() => {
@@ -82,7 +100,7 @@ export default function DashboardPage() {
         setIsSseConnected(false);
       };
     } catch {
-      setIsSseConnected(false);
+      // EventSource instantiation error
     }
 
     // Auto-tick worker every 30 seconds to simulate continuous probing

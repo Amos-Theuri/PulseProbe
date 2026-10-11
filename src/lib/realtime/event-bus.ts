@@ -45,7 +45,6 @@ class EventHub extends EventEmitter {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var pulseEventHub: EventHub | undefined;
 }
 

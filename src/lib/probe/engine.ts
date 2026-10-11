@@ -201,21 +201,88 @@ export async function executeProbe(
     allowPrivate
   );
 
-  // 4. High-resolution HTTP/HTTPS Probe
+  // 4. High-resolution HTTP/HTTPS Probe with Safe SSRF-Validated Redirects
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const startMonotonic = performance.now();
+  const MAX_REDIRECTS = 3;
 
   try {
-    const response = await fetch(probeUrl, {
-      method: "GET",
-      signal: controller.signal,
-      redirect: "follow",
-      headers,
-      // @ts-expect-error Node.js fetch supports dispatcher/agent option
-      agent,
-    });
+    let currentUrl = targetUrl;
+    let currentProbeUrl = probeUrl;
+    let currentHeaders = { ...headers };
+    let currentAgent = agent;
+    let response: Response | null = null;
+
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      response = await fetch(currentProbeUrl, {
+        method: "GET",
+        signal: controller.signal,
+        redirect: "manual",
+        headers: currentHeaders,
+        // @ts-expect-error Node.js fetch supports dispatcher/agent option
+        agent: currentAgent,
+      });
+
+      // Check if redirect status (301, 302, 303, 307, 308)
+      const isRedirect = [301, 302, 303, 307, 308].includes(response.status);
+      const location = response.headers.get("location");
+
+      if (isRedirect && location) {
+        if (hop === MAX_REDIRECTS) {
+          throw new Error(`Too many redirects (exceeded maximum limit of ${MAX_REDIRECTS})`);
+        }
+
+        // Resolve redirect URL (supports relative and absolute URLs)
+        const nextUrlObj = new URL(location, currentUrl);
+        const nextUrl = nextUrlObj.toString();
+
+        // SSRF Check on the redirect destination URL
+        const redirectSsrf = await validateSafeUrl(nextUrl, { allowPrivate });
+        if (!redirectSsrf.safe) {
+          return {
+            monitorId,
+            statusCode: response.status,
+            responseTimeMs: Number((performance.now() - startMonotonic).toFixed(2)),
+            isHealthy: false,
+            errorMessage: `SSRF blocked redirect to unsafe target: ${redirectSsrf.reason}`,
+            errorCategory: "SSRF_FORBIDDEN",
+            timestamp,
+          };
+        }
+
+        // Set up next hop
+        currentUrl = nextUrl;
+        currentProbeUrl = nextUrl;
+        currentHeaders = {
+          "User-Agent": options.userAgent ?? "PulseProbe-Beacon/1.0 (+https://pulseprobe.dev)",
+          "Accept": "*/*",
+        };
+
+        const nextPinnedIp = redirectSsrf.resolvedIps?.[0];
+        if (nextPinnedIp && !net.isIP(nextUrlObj.hostname)) {
+          const nextPinnedUrl = new URL(nextUrl);
+          nextPinnedUrl.hostname = net.isIPv6(nextPinnedIp) ? `[${nextPinnedIp}]` : nextPinnedIp;
+          currentProbeUrl = nextPinnedUrl.toString();
+          currentHeaders["Host"] = nextUrlObj.host;
+        }
+
+        currentAgent.destroy();
+        currentAgent = createSsrfSafeAgent(
+          nextUrlObj.protocol as "http:" | "https:",
+          allowPrivate
+        );
+        continue;
+      }
+
+      // Not a redirect, break and evaluate response
+      break;
+    }
+
+    if (!response) {
+      throw new Error("No response received from target probe");
+    }
 
     // Read limited body to measure true completion, prevent OOM
     await readLimitedBody(response);

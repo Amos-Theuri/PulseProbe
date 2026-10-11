@@ -85,9 +85,27 @@ npm start
 
 ## 5. Security & SSRF Protection
 
-PulseProbe enforces strict SSRF protections in `src/lib/probe/ssrf.ts`:
-- Rejects non-HTTP/HTTPS protocols (e.g. `file://`, `ftp://`, `gopher://`).
-- Blocks private IPv4 subnets (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
-- Blocks cloud metadata and link-local ranges (`169.254.169.254`, `fe80::/10`).
-- Blocks IPv6 loopback (`::1`) and unique local addresses (`fc00::/7`).
-- Performs pre-flight DNS lookups to inspect resolved IP addresses.
+PulseProbe enforces strict SSRF protections in `src/lib/probe/ssrf.ts` and `src/lib/probe/engine.ts`:
+- **Protocol Whitelisting**: Rejects non-HTTP/HTTPS protocols (e.g. `file://`, `ftp://`, `gopher://`).
+- **Private Subnet Blocking**: Blocks private IPv4 subnets (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+- **Cloud Metadata & Link-Local Protection**: Blocks link-local and cloud metadata ranges (`169.254.169.254`, `fe80::/10`).
+- **IPv6 Loopback & ULA**: Blocks IPv6 loopback (`::1`) and unique local addresses (`fc00::/7`).
+- **Safe HTTP Redirects**: Follows redirects with `redirect: "manual"`, re-validating the destination against SSRF rules before each hop.
+- **DNS Rebinding Defense**: Intercepts socket connection to verify destination IP addresses at connect time.
+- **Rate Limiting**: In-memory sliding window rate limits protect public status checks and mutating endpoints.
+
+### Production Deployment Security Checklist
+
+When deploying PulseProbe publicly (e.g. on Vercel or a custom server):
+1. **Configure `PULSEPROBE_API_KEY`**: Set a strong random secret token in your production environment variables. Mutating routes (`POST/PATCH/DELETE /api/monitors` and `POST /api/worker/tick`) will require `Authorization: Bearer <token>`.
+2. **Security Headers**: Production builds automatically serve hardened HTTP security headers (`X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Strict-Transport-Security`, `Permissions-Policy`).
+
+---
+
+## 6. Community & Compliance
+
+- **License**: [MIT License](LICENSE)
+- **Security Policy**: [SECURITY.md](SECURITY.md) — Responsible vulnerability disclosure instructions.
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md) — Local setup, testing, and pull request guidelines.
+- **Code of Conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
