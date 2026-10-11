@@ -104,7 +104,6 @@ When deploying PulseProbe publicly (e.g. on Vercel or a custom server):
 
 ## 6. Community & Compliance
 
-- **Free $0 Hosting Guide**: [FREE_HOSTING_GUIDE.md](FREE_HOSTING_GUIDE.md) — Step-by-step production setup on Vercel + Neon + automated crons.
 - **License**: [MIT License](LICENSE)
 - **Security Policy**: [SECURITY.md](SECURITY.md) — Responsible vulnerability disclosure instructions.
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md) — Local setup, testing, and pull request guidelines.
